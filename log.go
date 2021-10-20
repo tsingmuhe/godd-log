@@ -172,11 +172,10 @@ func (l *Logger) Panic() *LogEvent {
 }
 
 func (l *Logger) newLogEvent(level Level) *LogEvent {
-	return NewLogEvent(l, level)
-}
-
-func (l *Logger) isLevelEnabled(level Level) bool {
-	return Level(atomic.LoadUint32((*uint32)(&l.level))) >= level
+	if Level(atomic.LoadUint32((*uint32)(&l.level))) >= level {
+		return NewLogEvent(l, level)
+	}
+	return nil
 }
 
 func (l *Logger) log(event *LogEvent) {

@@ -49,10 +49,18 @@ func NewLogEvent(logger *Logger, level Level) *LogEvent {
 }
 
 func (event *LogEvent) WithField(key string, value interface{}) *LogEvent {
+	if event == nil {
+		return nil
+	}
+
 	return event.WithFields(Fields{key: value})
 }
 
 func (event *LogEvent) WithFields(fields Fields) *LogEvent {
+	if event == nil {
+		return nil
+	}
+
 	data := make(Fields, len(event.Data)+len(fields))
 	for k, v := range event.Data {
 		data[k] = v
@@ -78,24 +86,34 @@ func (event *LogEvent) WithFields(fields Fields) *LogEvent {
 }
 
 func (event *LogEvent) WithError(err error) *LogEvent {
+	if event == nil {
+		return nil
+	}
+
 	return event.WithField(ErrorKey, err)
 }
 
 func (event *LogEvent) WithContext(ctx context.Context) *LogEvent {
+	if event == nil {
+		return nil
+	}
+
 	event.Context = ctx
 	return event
 }
 
 func (event *LogEvent) Log(msg string) {
-	if event.logger.isLevelEnabled(event.Level) {
-		event.flag = event.logger.GetFlags()
-		event.Message = msg
-		event.Time = time.Now()
-
-		if event.flag&(Lshortfile|Llongfile) != 0 {
-			event.caller = getCaller()
-		}
-
-		event.logger.log(event)
+	if event == nil {
+		return
 	}
+
+	event.flag = event.logger.GetFlags()
+	event.Message = msg
+	event.Time = time.Now()
+
+	if event.flag&(Lshortfile|Llongfile) != 0 {
+		event.caller = getCaller()
+	}
+
+	event.logger.log(event)
 }
