@@ -7,11 +7,12 @@ import (
 )
 
 const (
-	FieldKeyMsg            = "msg"
-	FieldKeyLevel          = "level"
-	FieldKeyTime           = "time"
-	FieldKeyFunc           = "func"
-	FieldKeyFile           = "file"
+	FieldKeyMsg   = "msg"
+	FieldKeyLevel = "level"
+	FieldKeyTime  = "time"
+	FieldKeyFunc  = "func"
+	FieldKeyFile  = "file"
+	FieldKeyErr   = "error"
 )
 
 type Formatter interface {
@@ -22,7 +23,7 @@ type JSONFormatter struct {
 }
 
 func (f *JSONFormatter) Format(event *LogEvent) ([]byte, error) {
-	data := make(Fields, len(event.Data)+5)
+	data := make(Fields, len(event.Data)+6)
 	for k, v := range event.Data {
 		switch v := v.(type) {
 		case error:
@@ -34,33 +35,21 @@ func (f *JSONFormatter) Format(event *LogEvent) ([]byte, error) {
 
 	data[FieldKeyLevel] = event.Level.String()
 	data[FieldKeyMsg] = event.Message
-
-	if event.flag&(Ldate|Ltime|Lmicroseconds) != 0 {
-		timestampFormat := ""
-		if event.flag&Ldate != 0 {
-			timestampFormat = "2006-01-02"
-		}
-
-		if event.flag&(Ltime|Lmicroseconds) != 0 {
-			timestampFormat = timestampFormat + " 15:04:05"
-			if event.flag&Lmicroseconds != 0 {
-				timestampFormat = timestampFormat + ".000000"
-			}
-		}
-
-		data[FieldKeyTime] = event.Time.Format(timestampFormat)
+	data[FieldKeyTime] = event.Time.Format("2006-01-02T15:04:05.000000Z07:00")
+	if event.Err != nil {
+		data[FieldKeyErr] = event.Err.Error()
 	}
 
-	if event.caller != nil {
-		funcVal := event.caller.Function
-		fileVal := fmt.Sprintf("%s:%d", event.caller.File, event.caller.Line)
+	if event.Caller != nil {
+		funcVal := event.Caller.Function
+		fileVal := fmt.Sprintf("%s:%d", event.Caller.File, event.Caller.Line)
 
 		if funcVal != "" {
 			data[FieldKeyFunc] = funcVal
 		}
 
 		if fileVal != "" {
-			if event.flag&Lshortfile != 0 {
+			if event.FileFlag&Shortfile != 0 {
 				short := fileVal
 				for i := len(fileVal) - 1; i > 0; i-- {
 					if fileVal[i] == '/' {

@@ -4,20 +4,7 @@ import (
 	"context"
 	"reflect"
 	"runtime"
-	"sync"
 	"time"
-)
-
-const (
-	ErrorKey               = "error"
-	maximumCallerDepth int = 25
-	knownLogrusFrames  int = 3
-)
-
-var (
-	logPackage         string
-	minimumCallerDepth int
-	callerInitOnce     sync.Once
 )
 
 type Fields map[string]interface{}
@@ -25,9 +12,7 @@ type Fields map[string]interface{}
 type LogEvent struct {
 	logger *Logger
 
-	flag uint32
-
-	caller *runtime.Frame
+	FileFlag uint32
 
 	Level Level
 
@@ -35,17 +20,13 @@ type LogEvent struct {
 
 	Message string
 
+	Err error
+
 	Time time.Time
 
-	Context context.Context
-}
+	Caller *runtime.Frame
 
-func NewLogEvent(logger *Logger, level Level) *LogEvent {
-	return &LogEvent{
-		logger: logger,
-		Level:  level,
-		Data:   make(Fields, 6),
-	}
+	Context context.Context
 }
 
 func (event *LogEvent) WithField(key string, value interface{}) *LogEvent {
@@ -90,15 +71,7 @@ func (event *LogEvent) WithError(err error) *LogEvent {
 		return nil
 	}
 
-	return event.WithField(ErrorKey, err)
-}
-
-func (event *LogEvent) WithContext(ctx context.Context) *LogEvent {
-	if event == nil {
-		return nil
-	}
-
-	event.Context = ctx
+	event.Err = err
 	return event
 }
 
@@ -107,12 +80,12 @@ func (event *LogEvent) Log(msg string) {
 		return
 	}
 
-	event.flag = event.logger.GetFlags()
+	event.FileFlag = event.logger.getFileFlag()
 	event.Message = msg
 	event.Time = time.Now()
 
-	if event.flag&(Lshortfile|Llongfile) != 0 {
-		event.caller = getCaller()
+	if event.FileFlag&(Shortfile|Longfile) != 0 {
+		event.Caller = getCaller()
 	}
 
 	event.logger.log(event)

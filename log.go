@@ -1,6 +1,7 @@
 package logs
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,26 +10,23 @@ import (
 )
 
 const (
-	Ldate         uint32 = 1 << iota // the date in the local time zone: 2009/01/23
-	Ltime                            // the time in the local time zone: 01:23:23
-	Lmicroseconds                    // microsecond resolution: 01:23:23.123123.  assumes Ltime.
-	Llongfile                        // full file name and line number: /a/b/c/d.go:23
-	Lshortfile                       // final file name element and line number: d.go:23. overrides Llongfile
-)
-
-const (
 	defaultAsyncMsgLen = 1e3
+
+	Longfile uint32 = 1 << iota
+	Shortfile
 )
 
 type Logger struct {
 	level     Level
-	flag      uint32
 	eventPool sync.Pool
 
-	asynchronous uint32
-	msgChan      chan *LogEvent
-	signalChan   chan string
-	wg           sync.WaitGroup
+	fileFlag uint32
+
+	running    uint32
+	msgChanLen uint32
+	msgChan    chan *LogEvent
+	signalChan chan string
+	wg         sync.WaitGroup
 
 	mu        sync.RWMutex
 	hooks     LevelHooks
@@ -36,48 +34,48 @@ type Logger struct {
 	out       io.Writer
 }
 
-func New(level Level, formatter Formatter, out io.Writer, flag uint32) *Logger {
+func New(level Level, formatter Formatter, out io.Writer) *Logger {
 	return &Logger{
 		level:     level,
-		flag:      flag,
 		formatter: formatter,
 		out:       out,
 		hooks:     make(LevelHooks),
 	}
 }
 
-func (l *Logger) SetLevel(level Level) {
+func (l *Logger) SetLevel(level Level) *Logger {
 	atomic.StoreUint32((*uint32)(&l.level), uint32(level))
+	return l
 }
 
-func (l *Logger) SetFlags(flag uint32) {
-	atomic.StoreUint32(&l.flag, flag)
+func (l *Logger) SetFileFlag(flag uint32) *Logger {
+	atomic.StoreUint32(&l.fileFlag, flag)
+	return l
 }
 
-func (l *Logger) GetFlags() uint32 {
-	return atomic.LoadUint32(&l.flag)
-}
-
-func (l *Logger) AddHook(hook Hook) {
+func (l *Logger) AddHook(hook Hook) *Logger {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.hooks.Add(hook)
+	return l
 }
 
-func (l *Logger) SetFormatter(formatter Formatter) {
+func (l *Logger) SetFormatter(formatter Formatter) *Logger {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.formatter = formatter
+	return l
 }
 
-func (l *Logger) SetOutput(out io.Writer) {
+func (l *Logger) SetOutput(out io.Writer) *Logger {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.out = out
+	return l
 }
 
-func (l *Logger) Async(msgLen ...int64) {
-	if !atomic.CompareAndSwapUint32(&l.asynchronous, 0, 1) {
+func (l *Logger) Start(msgLen ...int64) {
+	if !atomic.CompareAndSwapUint32(&l.running, 0, 1) {
 		return
 	}
 
@@ -90,49 +88,33 @@ func (l *Logger) Async(msgLen ...int64) {
 	l.signalChan = make(chan string, 1)
 	l.wg.Add(1)
 
-	go l.startWorker()
-}
+	worker := func() {
+		isClose := false
+		for {
+			select {
+			case event := <-l.msgChan:
+				l.writeLog(event)
+			case sg := <-l.signalChan:
+				if sg == "close" {
+					// Now should only send "flush" or "close" to bl.signalChan
+					l.cleanChan()
+					isClose = true
+				}
 
-func (l *Logger) startWorker() {
-	isClose := false
-	for {
-		select {
-		case event := <-l.msgChan:
-			l.doLog(event)
-		case sg := <-l.signalChan:
-			if sg == "close" {
-				// Now should only send "flush" or "close" to bl.signalChan
-				l.cleanChan()
-				isClose = true
+				l.wg.Done()
 			}
 
-			l.wg.Done()
-		}
-
-		if isClose {
-			return
+			if isClose {
+				return
+			}
 		}
 	}
+
+	go worker()
 }
 
-func (l *Logger) cleanChan() {
-	msgChanEmpty := false
-	for {
-		select {
-		case event := <-l.msgChan:
-			l.doLog(event)
-		default:
-			msgChanEmpty = true
-		}
-
-		if msgChanEmpty {
-			break
-		}
-	}
-}
-
-func (l *Logger) StopAsync() {
-	if !atomic.CompareAndSwapUint32(&l.asynchronous, 1, 0) {
+func (l *Logger) Stop() {
+	if !atomic.CompareAndSwapUint32(&l.running, 1, 0) {
 		return
 	}
 
@@ -143,53 +125,97 @@ func (l *Logger) StopAsync() {
 }
 
 func (l *Logger) Trace() *LogEvent {
-	return l.newLogEvent(TraceLevel)
+	return l.newLogEvent(context.Background(), TraceLevel)
 }
 
 func (l *Logger) Debug() *LogEvent {
-	return l.newLogEvent(DebugLevel)
+	return l.newLogEvent(context.Background(), DebugLevel)
 }
 
 func (l *Logger) Info() *LogEvent {
-	return l.newLogEvent(InfoLevel)
+	return l.newLogEvent(context.Background(), InfoLevel)
 }
 
 func (l *Logger) Warn() *LogEvent {
-	return l.newLogEvent(WarnLevel)
+	return l.newLogEvent(context.Background(), WarnLevel)
 }
 
 func (l *Logger) Error() *LogEvent {
-	return l.newLogEvent(ErrorLevel)
+	return l.newLogEvent(context.Background(), ErrorLevel)
 }
 
-func (l *Logger) Fatal() *LogEvent {
-	return l.newLogEvent(FatalLevel)
+func (l *Logger) CtxTrace(ctx context.Context) *LogEvent {
+	return l.newLogEvent(ctx, TraceLevel)
 }
 
-func (l *Logger) Panic() *LogEvent {
-	return l.newLogEvent(PanicLevel)
+func (l *Logger) CtxDebug(ctx context.Context) *LogEvent {
+	return l.newLogEvent(ctx, DebugLevel)
 }
 
-func (l *Logger) newLogEvent(level Level) *LogEvent {
+func (l *Logger) CtxInfo(ctx context.Context) *LogEvent {
+	return l.newLogEvent(ctx, InfoLevel)
+}
+
+func (l *Logger) CtxWarn(ctx context.Context) *LogEvent {
+	return l.newLogEvent(ctx, WarnLevel)
+}
+
+func (l *Logger) CtxError(ctx context.Context) *LogEvent {
+	return l.newLogEvent(ctx, ErrorLevel)
+}
+
+func (l *Logger) newLogEvent(ctx context.Context, level Level) *LogEvent {
 	if Level(atomic.LoadUint32((*uint32)(&l.level))) >= level {
-		return NewLogEvent(l, level)
+		event, ok := l.eventPool.Get().(*LogEvent)
+		if ok {
+			event.Level = level
+			event.Data = make(Fields, 6)
+			event.Context = ctx
+			return event
+		}
+
+		return &LogEvent{
+			logger:  l,
+			Level:   level,
+			Data:    make(Fields, 6),
+			Context: ctx,
+		}
 	}
 	return nil
 }
 
+func (l *Logger) getFileFlag() uint32 {
+	return atomic.LoadUint32(&l.fileFlag)
+}
+
 func (l *Logger) log(event *LogEvent) {
-	if atomic.LoadUint32(&l.asynchronous) == 1 {
-		select {
-		case l.msgChan <- event:
-		default:
-			l.doLog(event)
-		}
-	} else {
-		l.doLog(event)
+	if atomic.LoadUint32(&l.running) != 1 {
+		return
+	}
+
+	select {
+	case l.msgChan <- event:
+	default:
 	}
 }
 
-func (l *Logger) doLog(event *LogEvent) {
+func (l *Logger) cleanChan() {
+	msgChanEmpty := false
+	for {
+		select {
+		case event := <-l.msgChan:
+			l.writeLog(event)
+		default:
+			msgChanEmpty = true
+		}
+
+		if msgChanEmpty {
+			break
+		}
+	}
+}
+
+func (l *Logger) writeLog(event *LogEvent) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
@@ -212,5 +238,7 @@ func (l *Logger) doLog(event *LogEvent) {
 
 func (l *Logger) releaseLogEvent(event *LogEvent) {
 	event.Data = map[string]interface{}{}
+	event.Context = nil
+	event.Err = nil
 	l.eventPool.Put(event)
 }

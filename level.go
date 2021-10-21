@@ -8,9 +8,7 @@ import (
 type Level uint32
 
 const (
-	PanicLevel Level = iota
-	FatalLevel
-	ErrorLevel
+	ErrorLevel Level = iota
 	WarnLevel
 	InfoLevel
 	DebugLevel
@@ -37,13 +35,9 @@ func (level Level) MarshalText() ([]byte, error) {
 		return []byte("warning"), nil
 	case ErrorLevel:
 		return []byte("error"), nil
-	case FatalLevel:
-		return []byte("fatal"), nil
-	case PanicLevel:
-		return []byte("panic"), nil
 	}
 
-	return nil, fmt.Errorf("not a valid logrus level %d", level)
+	return nil, fmt.Errorf("not a valid log level %d", level)
 }
 
 func (level *Level) UnmarshalText(text []byte) error {
@@ -59,10 +53,6 @@ func (level *Level) UnmarshalText(text []byte) error {
 
 func ParseLevel(lvl string) (Level, error) {
 	switch strings.ToLower(lvl) {
-	case "panic":
-		return PanicLevel, nil
-	case "fatal":
-		return FatalLevel, nil
 	case "error":
 		return ErrorLevel, nil
 	case "warn", "warning":
@@ -76,5 +66,5 @@ func ParseLevel(lvl string) (Level, error) {
 	}
 
 	var l Level
-	return l, fmt.Errorf("not a valid logrus Level: %q", lvl)
+	return l, fmt.Errorf("not a valid log Level: %q", lvl)
 }

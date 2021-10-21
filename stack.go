@@ -3,6 +3,17 @@ package logs
 import (
 	"runtime"
 	"strings"
+	"sync"
+)
+
+const (
+	maximumCallerDepth int = 25
+	knownFrames        int = 3
+)
+
+var (
+	logPackage     string
+	callerInitOnce sync.Once
 )
 
 func getCaller() *runtime.Frame {
@@ -19,13 +30,11 @@ func getCaller() *runtime.Frame {
 				break
 			}
 		}
-
-		minimumCallerDepth = knownLogrusFrames
 	})
 
 	// Restrict the lookback frames to avoid runaway lookups
 	pcs := make([]uintptr, maximumCallerDepth)
-	depth := runtime.Callers(minimumCallerDepth, pcs)
+	depth := runtime.Callers(knownFrames, pcs)
 	frames := runtime.CallersFrames(pcs[:depth])
 
 	for f, again := frames.Next(); again; f, again = frames.Next() {
