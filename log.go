@@ -21,20 +21,19 @@ const (
 )
 
 type Logger struct {
-	mu sync.RWMutex
-
 	level     Level
 	flag      uint32
-	hooks     LevelHooks
-	formatter Formatter
-	out       io.Writer
-
 	eventPool sync.Pool
 
 	asynchronous uint32
 	msgChan      chan *LogEvent
 	signalChan   chan string
 	wg           sync.WaitGroup
+
+	mu        sync.RWMutex
+	hooks     LevelHooks
+	formatter Formatter
+	out       io.Writer
 }
 
 func New(level Level, formatter Formatter, out io.Writer, flag uint32) *Logger {
